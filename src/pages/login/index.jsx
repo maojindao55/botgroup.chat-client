@@ -6,7 +6,7 @@ import { useIsMobile } from '@/hooks/use-mobile';
 
 export default function Login() {
   const navigate = useNavigate();
-  const [loginType, setLoginType] = useState('wechat'); // 'phone' | 'wechat'
+  const [loginType, setLoginType] = useState('phone'); // 'phone' | 'wechat'
   const isMobile = useIsMobile();
 
   const handleLoginSuccess = (token) => {

@@ -1,11 +1,14 @@
-import React from 'react';
+import { useState, useEffect } from 'react';
 import { Button } from "@/components/ui/button";
-import { MessageSquareIcon, PlusCircleIcon, MenuIcon, PanelLeftCloseIcon } from "lucide-react";
+import { MessageSquareIcon, PlusCircleIcon, MenuIcon, PanelLeftCloseIcon, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import GitHubButton from 'react-github-btn';
 import '@fontsource/audiowide';
-import { AdSection } from './AdSection';
+// import { AdSection } from './AdSection';
 import { UserSection } from './UserSection';
+import { GroupSettings } from './GroupSettings';
+import { GroupService } from '@/services/groupService';
+import { toast } from 'sonner';
 import { 
   Tooltip,
   TooltipContent,
@@ -23,16 +26,126 @@ const getRandomColor = (index: number) => {
   return colors[hashCode % colors.length];
 };
 
+// Group 接口定义
+interface Group {
+  id: string;
+  name: string;
+  description?: string;
+  avatar?: string;
+  memberCount?: number;
+  isPrivate?: boolean;
+}
+
 interface SidebarProps {
   isOpen: boolean;
   toggleSidebar: () => void;
   selectedGroupIndex?: number;
   onSelectGroup?: (index: number) => void;
-  groups: Group[];
+  groups?: Group[];
+  onCreateGroup?: (groupInfo: Group) => void;
+  onGroupsChange?: (groups: Group[]) => void;
 }
 
-const Sidebar = ({ isOpen, toggleSidebar, selectedGroupIndex = 0, onSelectGroup, groups }: SidebarProps) => {
-  
+const Sidebar = ({ 
+  isOpen, 
+  toggleSidebar, 
+  selectedGroupIndex = 0, 
+  onSelectGroup, 
+  groups: propGroups, 
+  onCreateGroup,
+  onGroupsChange 
+}: SidebarProps) => {
+  const [showGroupSettings, setShowGroupSettings] = useState(false);
+  const [localGroups, setLocalGroups] = useState<Group[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  // 使用本地状态或传入的 groups
+  const groups = propGroups || localGroups;
+
+  // 获取群组列表
+  const fetchGroups = async (showLoading = true) => {
+    if (showLoading) setIsLoading(true);
+    else setIsRefreshing(true);
+    
+    try {
+      const response = await GroupService.getGroups();
+      if (response.success) {
+        const fetchedGroups = response.data.map(group => ({
+          id: group.id.toString(),
+          name: group.name,
+          description: group.description,
+          memberCount: group.characters?.length || 0,
+          isPrivate: false
+        }));
+        
+        // 获取现有的群组数据
+        const existingGroups = propGroups || localGroups;
+        
+        // 合并数据：保留现有数据，追加新数据（去重）
+        const mergedGroups = [...existingGroups];
+        fetchedGroups.forEach(newGroup => {
+          // 检查是否已存在相同ID的群组
+          const existingIndex = mergedGroups.findIndex(group => group.id === newGroup.id);
+          if (existingIndex >= 0) {
+            // 如果存在，更新现有群组信息
+            mergedGroups[existingIndex] = newGroup;
+          } else {
+            // 如果不存在，追加到列表
+            mergedGroups.push(newGroup);
+          }
+        });
+        
+        // 更新本地状态
+        setLocalGroups(mergedGroups);
+        
+        // 通知父组件群组数据已更新
+        onGroupsChange?.(mergedGroups);
+      }
+    } catch (error: any) {
+      console.error('获取群组列表失败:', error);
+      toast.error(error.message || '获取群组列表失败');
+    } finally {
+      setIsLoading(false);
+      setIsRefreshing(false);
+    }
+  };
+
+  // 组件挂载时获取群组列表
+  useEffect(() => {
+    if (!propGroups) {
+      fetchGroups();
+    }
+  }, [propGroups]);
+
+  // 处理创建群聊
+  const handleCreateGroup = (groupInfo: any) => {
+    const newGroup: Group = {
+      id: groupInfo.id || Date.now().toString(),
+      name: groupInfo.name,
+      description: groupInfo.description,
+      memberCount: groupInfo.memberCount || 1,
+      isPrivate: groupInfo.isPrivate || false
+    };
+    
+    // 获取现有的群组数据并添加新群组
+    const existingGroups = propGroups || localGroups;
+    const updatedGroups = [...existingGroups, newGroup];
+    
+    // 更新本地群组列表
+    setLocalGroups(updatedGroups);
+    
+    // 通知父组件
+    onCreateGroup?.(newGroup);
+    onGroupsChange?.(updatedGroups);
+    setShowGroupSettings(false);
+  };
+
+  // 处理刷新群组列表
+  const handleRefresh = () => {
+    fetchGroups(false);
+  };
+
   return (
     <>
       {/* 侧边栏 - 在移动设备上可以隐藏，在桌面上始终显示 */}
@@ -52,6 +165,27 @@ const Sidebar = ({ isOpen, toggleSidebar, selectedGroupIndex = 0, onSelectGroup,
               )}>
                 群列表
               </span>
+              
+              {/* 刷新按钮 */}
+              {isOpen && (
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button 
+                        variant="ghost" 
+                        size="icon"
+                        onClick={handleRefresh}
+                        disabled={isRefreshing}
+                        className="mr-1 h-7 w-7"
+                      >
+                        <RefreshCw className={cn("h-3 w-3", isRefreshing && "animate-spin")} />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>刷新群列表</TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              )}
+              
               <Button 
                 variant="ghost" 
                 size="icon" 
@@ -68,13 +202,32 @@ const Sidebar = ({ isOpen, toggleSidebar, selectedGroupIndex = 0, onSelectGroup,
           
           <div className="flex-1 overflow-auto p-2">
             <nav className="space-y-1.5">
-              {groups.map((group, index) => (
+              {isLoading ? (
+                // 加载状态
+                <div className="space-y-2">
+                  {[1, 2, 3].map((i) => (
+                    <div key={i} className="flex items-center gap-3 px-3 py-2.5 rounded-md">
+                      <div className="h-5 w-5 bg-gray-200 rounded animate-pulse"></div>
+                      <div className="h-4 bg-gray-200 rounded flex-1 animate-pulse"></div>
+                    </div>
+                  ))}
+                </div>
+              ) : groups.length === 0 ? (
+                // 空状态
+                <div className="text-center py-8 text-gray-500">
+                  <MessageSquareIcon className="w-8 h-8 mx-auto mb-2 text-gray-300" />
+                  <p className="text-sm">暂无群聊</p>
+                  <p className="text-xs">点击下方创建新群聊</p>
+                </div>
+              ) : (
+                // 群组列表
+                groups.map((group, index) => (
                 <a 
                   key={group.id}
                   href="#" 
                   onClick={(e) => {
                     e.preventDefault();
-                    onSelectGroup?.(index);
+                    onSelectGroup?.(index, parseInt(group.id));
                   }}
                   className={cn(
                     "flex items-center gap-1 rounded-md px-3 py-2.5 text-sm font-medium transition-all hover:bg-accent/80 group",
@@ -90,7 +243,8 @@ const Sidebar = ({ isOpen, toggleSidebar, selectedGroupIndex = 0, onSelectGroup,
                     isOpen ? "opacity-100 max-w-full" : "opacity-0 max-w-0 md:max-w-0"
                   )}>{group.name}</span>
                 </a>
-              ))}
+                ))
+              )}
               
               <TooltipProvider>
                 <Tooltip>
@@ -103,6 +257,7 @@ const Sidebar = ({ isOpen, toggleSidebar, selectedGroupIndex = 0, onSelectGroup,
                       )}
                       onClick={(e) => {
                         e.preventDefault();
+                        setShowGroupSettings(true);
                       }}
                     >
                       <PlusCircleIcon className="h-5 w-5 flex-shrink-0 text-amber-500 group-hover:text-amber-600" />
@@ -113,7 +268,7 @@ const Sidebar = ({ isOpen, toggleSidebar, selectedGroupIndex = 0, onSelectGroup,
                     </a>
                   </TooltipTrigger>
                   <TooltipContent>
-                    <p>即将开放,敬请期待</p>
+                    <p>创建新群聊</p>
                   </TooltipContent>
                 </Tooltip>
               </TooltipProvider>
@@ -168,6 +323,14 @@ const Sidebar = ({ isOpen, toggleSidebar, selectedGroupIndex = 0, onSelectGroup,
           onClick={toggleSidebar}
         />
       )}
+
+      {/* 群聊设置组件 */}
+      <GroupSettings
+        isOpen={showGroupSettings}
+        onClose={() => setShowGroupSettings(false)}
+        mode="create"
+        onSave={handleCreateGroup}
+      />
     </>
   );
 };

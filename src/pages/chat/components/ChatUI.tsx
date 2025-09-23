@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/tooltip";
 
 import type { AICharacter } from "@/config/aiCharacters";
+import type { Group as ApiGroup } from "@/services/groupService";
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
@@ -24,7 +25,32 @@ import { AdBanner, AdBannerMobile } from './AdSection';
 import { useUserStore } from '@/store/userStore';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { getAvatarData } from '@/utils/avatar';
+import { GroupService } from '@/services/groupService';
 
+// 定义消息接口
+interface Message {
+  id: number;
+  sender: User;
+  content: string;
+  isAI: boolean;
+  isError?: boolean;
+}
+
+// 定义本地Group接口（兼容现有代码）
+interface Group {
+  id: string;
+  name: string;
+  description?: string;
+  members: string[];
+  isGroupDiscussionMode: boolean;
+}
+
+// 定义用户接口
+interface User {
+  id: number | string;
+  name: string;
+  avatar?: string;
+}
 
 // 修改 KaTeXStyle 组件
 const KaTeXStyle = () => (
@@ -61,18 +87,20 @@ const ChatUI = () => {
   //获取url参数
   const urlParams = new URLSearchParams(window.location.search);
   const id = urlParams.get('id')? parseInt(urlParams.get('id')!) : 0;
+  const index = urlParams.get('index')? parseInt(urlParams.get('index')!) : 0;
   // 1. 所有的 useState 声明
-  const [groups, setGroups] = useState([]);
-  const [selectedGroupIndex, setSelectedGroupIndex] = useState(id);
-  const [group, setGroup] = useState(null);
-  const [groupAiCharacters, setGroupAiCharacters] = useState([]);
+  const [groups, setGroups] = useState<Group[]>([]);
+  const [selectedGroupIndex, setSelectedGroupIndex] = useState(index);
+  const [selectedGroupId, setSelectedGroupId] = useState(id);
+  const [group, setGroup] = useState<Group | null>(null);
+  const [groupAiCharacters, setGroupAiCharacters] = useState<AICharacter[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isInitializing, setIsInitializing] = useState(false);
   const [isGroupDiscussionMode, setIsGroupDiscussionMode] = useState(false);
-  const [users, setUsers] = useState([]);
-  const [allNames, setAllNames] = useState([]);
+  const [users, setUsers] = useState<User[]>([]);
+  const [allNames, setAllNames] = useState<string[]>([]);
   const [showMembers, setShowMembers] = useState(false);
-  const [messages, setMessages] = useState([]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [showAd, setShowAd] = useState(false);
   const [inputMessage, setInputMessage] = useState("");
   const [pendingContent, setPendingContent] = useState("");
@@ -112,20 +140,71 @@ const ChatUI = () => {
         }
         const {data} = await response.json();
         console.log("初始化数据", data);
-        const group = data.groups[selectedGroupIndex];
+        
+        // 自动获取最新的群组列表
+        try {
+          const groupsResponse = await GroupService.getGroups();
+          if (groupsResponse.success && groupsResponse.data) {
+            // 将API返回的群组列表转换为本地格式
+            const apiGroups = groupsResponse.data;
+            const localGroups: Group[] = apiGroups.map(apiGroup => ({
+              id: apiGroup.id.toString(),
+              name: apiGroup.name,
+              description: apiGroup.description,
+              members: apiGroup.characters?.map(c => c.id.toString()) || [],
+              isGroupDiscussionMode: false // 默认值，可以根据需要调整
+            }));
+
+            setGroups(data.groups.concat(localGroups));
+            console.log("获取群组列表成功", localGroups);
+          } else {
+            console.error("获取群组列表失败", groupsResponse.message);
+            // 如果API失败，使用初始化数据中的群组
+            setGroups(data.groups);
+          }
+        } catch (error) {
+          console.error("获取群组列表出错:", error);
+          // 如果API出错，使用初始化数据中的群组
+          setGroups(data.groups);
+        }
+        
+        let group = null;
+        //如果groupid不为空，则根据groupid获取group
+        if (selectedGroupId) {
+            const groupResponse = await GroupService.getGroup(selectedGroupId);
+            if (groupResponse.success && groupResponse.data) {
+              // 将API返回的Group转换为本地Group格式
+              const apiGroup = groupResponse.data;
+              const localGroup: Group = {
+                id: apiGroup.id.toString(),
+                name: apiGroup.name,
+                description: apiGroup.description,
+                members: apiGroup.characters?.map(c => c.id.toString()) || [],
+                isGroupDiscussionMode: false // 默认值，可以根据需要调整
+              };
+              group = localGroup;
+              console.log("获取群组详情成功", localGroup);
+            } else {
+              console.error("获取群组详情失败", groupResponse.message);
+              // 如果获取特定群组失败，使用群组列表中的群组
+              group = data.groups[selectedGroupIndex];
+            }
+        } else {
+           group = data.groups[selectedGroupIndex];
+        }
+        //const group = data.groups[selectedGroupIndex];
         const characters = data.characters;
-        setGroups(data.groups);
         setGroup(group);
         setIsInitializing(false);
         setIsGroupDiscussionMode(group.isGroupDiscussionMode);
         const groupAiCharacters = characters
-          .filter(character => group.members.includes(character.id))
-          .filter(character => character.personality !== "sheduler")
-          .sort((a, b) => {
+          .filter((character: any) => group.members.includes(character.id))
+          .filter((character: any) => character.personality !== "sheduler")
+          .sort((a: any, b: any) => {
             return group.members.indexOf(a.id) - group.members.indexOf(b.id);
           });
         setGroupAiCharacters(groupAiCharacters);
-        const allNames = groupAiCharacters.map(character => character.name);
+        const allNames = groupAiCharacters.map((character: any) => character.name);
         allNames.push('user');
         let avatar_url = null;
         let nickname = '我';
@@ -148,7 +227,7 @@ const ChatUI = () => {
           });
         }
         setUsers([
-          { id: 1, name: nickname, avatar: avatar_url },
+          { id: 1, name: nickname, avatar: avatar_url || undefined },
           ...groupAiCharacters
         ]);
       } catch (error) {
@@ -184,7 +263,7 @@ const ChatUI = () => {
   useEffect(() => {
     if (userStore.userInfo && users.length > 0) {
       setUsers(prev => [
-        { id: 1, name: userStore.userInfo.nickname, avatar: userStore.userInfo.avatar_url? userStore.userInfo.avatar_url : null },
+        { id: 1, name: userStore.userInfo.nickname, avatar: userStore.userInfo.avatar_url || undefined },
         ...prev.slice(1) // 保留其他 AI 角色
       ]);
     }
@@ -259,7 +338,7 @@ const ChatUI = () => {
       });
       const shedulerData = await shedulerResponse.json();
       const selectedAIs = shedulerData.selectedAIs;
-      selectedGroupAiCharacters = selectedAIs.map(ai => groupAiCharacters.find(c => c.id === ai));
+      selectedGroupAiCharacters = selectedAIs.map((ai: any) => groupAiCharacters.find(c => c.id === ai));
     }
     for (let i = 0; i < selectedGroupAiCharacters.length; i++) {
       //禁言
@@ -277,7 +356,7 @@ const ChatUI = () => {
       // 添加当前 AI 的消息
       setMessages(prev => [...prev, aiMessage]);
       let uri = "/api/chat";
-      if (selectedGroupAiCharacters[i].rag == true) {
+      if ((selectedGroupAiCharacters[i] as any).rag == true) {
         uri = "/rag/query";
       }
       try {
@@ -294,9 +373,9 @@ const ChatUI = () => {
             history: messageHistory,
             index: i,
             aiName: selectedGroupAiCharacters[i].name,
-            rag: selectedGroupAiCharacters[i].rag,
-            knowledge: selectedGroupAiCharacters[i].knowledge,
-            custom_prompt: selectedGroupAiCharacters[i].custom_prompt.replace('#groupName#', group.name) + "\n" + group.description
+            rag: (selectedGroupAiCharacters[i] as any).rag,
+            knowledge: (selectedGroupAiCharacters[i] as any).knowledge,
+            custom_prompt: (selectedGroupAiCharacters[i].custom_prompt || '').replace('#groupName#', group.name) + "\n" + (group.description || '')
           }),
         });
 
@@ -318,12 +397,13 @@ const ChatUI = () => {
         while (true) {
           //console.log("读取中")
           const startTime = Date.now();
-          let { done, value } = await Promise.race([
+          let result = await Promise.race([
             reader.read(),
             new Promise((_, reject) => 
               setTimeout(() => reject(new Error('响应超时')), timeout - (Date.now() - startTime))
             )
-          ]);
+          ]) as ReadableStreamReadResult<Uint8Array>;
+          let { done, value } = result;
 
           if (Date.now() - startTime > timeout) {
             reader.cancel();
@@ -402,12 +482,12 @@ const ChatUI = () => {
         console.error("发送消息失败:", error);
         messageHistory.push({
           role: 'user',
-          content: aiMessage.sender.name + "对不起，我还不够智能，服务又断开了(错误：" + error.message + ")。",
+          content: aiMessage.sender.name + "对不起，我还不够智能，服务又断开了(错误：" + (error instanceof Error ? error.message : String(error)) + ")。",
           name: aiMessage.sender.name
         });
         setMessages(prev => prev.map(msg => 
           msg.id === aiMessage.id 
-            ? { ...msg, content: "对不起，我还不够智能，服务又断开了(错误：" + error.message + ")。", isError: true }
+            ? { ...msg, content: "对不起，我还不够智能，服务又断开了(错误：" + (error instanceof Error ? error.message : String(error)) + ")。", isError: true }
             : msg
         ));
       }
@@ -422,8 +502,10 @@ const ChatUI = () => {
 
   // 处理群组选择
   const handleSelectGroup = (index: number) => {
-    //进行跳转到?id=index
-    window.location.href = `?id=${index}`;
+    // 从groups数组中获取对应群组的id
+    const groupId = groups[index]?.id;
+    //进行跳转到?index=index&id=groupId
+    window.location.href = `?index=${index}&id=${groupId}`;
     return;
   };
 
@@ -438,7 +520,8 @@ const ChatUI = () => {
             toggleSidebar={toggleSidebar} 
             selectedGroupIndex={selectedGroupIndex}
             onSelectGroup={handleSelectGroup}
-            groups={groups}
+            groups={groups as any}
+            onGroupsChange={setGroups as any}
           />
           
           {/* 聊天主界面 */}
@@ -649,6 +732,12 @@ const ChatUI = () => {
           isGroupDiscussionMode={isGroupDiscussionMode}
           onToggleGroupDiscussion={() => setIsGroupDiscussionMode(!isGroupDiscussionMode)}
           getAvatarData={getAvatarData}
+          groupName={group?.name || ''}
+          onGroupNameChange={(newName: string) => {
+            if (group) {
+              setGroup({...group, name: newName});
+            }
+          }}
         />
       </div>
 
