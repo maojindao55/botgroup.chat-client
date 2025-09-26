@@ -34,6 +34,7 @@ interface Group {
   avatar?: string;
   memberCount?: number;
   isPrivate?: boolean;
+  static?: boolean;
 }
 
 interface SidebarProps {
@@ -76,24 +77,28 @@ const Sidebar = ({
           name: group.name,
           description: group.description,
           memberCount: group.characters?.length || 0,
-          isPrivate: false
+          isPrivate: false,
+          static: group.static,
         }));
         
         // 获取现有的群组数据
         const existingGroups = propGroups || localGroups;
         
         // 合并数据：保留现有数据，追加新数据（去重）
-        const mergedGroups = [...existingGroups];
+        // 首先过滤现有群组，只保留static为true的群组
+        const filteredExistingGroups = existingGroups.filter(group => group.static === true);
+        
+        const mergedGroups = [...filteredExistingGroups];
         fetchedGroups.forEach(newGroup => {
-          // 检查是否已存在相同ID的群组
-          const existingIndex = mergedGroups.findIndex(group => group.id === newGroup.id);
-          if (existingIndex >= 0) {
-            // 如果存在，更新现有群组信息
-            mergedGroups[existingIndex] = newGroup;
-          } else {
-            // 如果不存在，追加到列表
-            mergedGroups.push(newGroup);
-          }
+            // 检查是否已存在相同ID的群组
+            const existingIndex = mergedGroups.findIndex(group => group.id === newGroup.id);
+            if (existingIndex >= 0) {
+              // 如果存在，更新现有群组信息
+              mergedGroups[existingIndex] = newGroup;
+            } else {
+              // 如果不存在，追加到列表
+              mergedGroups.push(newGroup);
+            }
         });
         
         // 更新本地状态
@@ -120,25 +125,8 @@ const Sidebar = ({
 
   // 处理创建群聊
   const handleCreateGroup = (groupInfo: any) => {
-    const newGroup: Group = {
-      id: groupInfo.id || Date.now().toString(),
-      name: groupInfo.name,
-      description: groupInfo.description,
-      memberCount: groupInfo.memberCount || 1,
-      isPrivate: groupInfo.isPrivate || false
-    };
-    
-    // 获取现有的群组数据并添加新群组
-    const existingGroups = propGroups || localGroups;
-    const updatedGroups = [...existingGroups, newGroup];
-    
-    // 更新本地群组列表
-    setLocalGroups(updatedGroups);
-    
-    // 通知父组件
-    onCreateGroup?.(newGroup);
-    onGroupsChange?.(updatedGroups);
-    setShowGroupSettings(false);
+    // 直接刷新群组列表
+    handleRefresh();
   };
 
   // 处理刷新群组列表
@@ -166,25 +154,6 @@ const Sidebar = ({
                 群列表
               </span>
               
-              {/* 刷新按钮 */}
-              {isOpen && (
-                <TooltipProvider>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button 
-                        variant="ghost" 
-                        size="icon"
-                        onClick={handleRefresh}
-                        disabled={isRefreshing}
-                        className="mr-1 h-7 w-7"
-                      >
-                        <RefreshCw className={cn("h-3 w-3", isRefreshing && "animate-spin")} />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>刷新群列表</TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
-              )}
               
               <Button 
                 variant="ghost" 

@@ -25,7 +25,7 @@ import { AdBanner, AdBannerMobile } from './AdSection';
 import { useUserStore } from '@/store/userStore';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { getAvatarData } from '@/utils/avatar';
-import { GroupService } from '@/services/groupService';
+import { GroupService, CharacterService, type Character } from '@/services/groupService';
 
 // 定义消息接口
 interface Message {
@@ -105,7 +105,6 @@ const ChatUI = () => {
   const [inputMessage, setInputMessage] = useState("");
   const [pendingContent, setPendingContent] = useState("");
   const [isTyping, setIsTyping] = useState(false);
-  const [mutedUsers, setMutedUsers] = useState<string[]>([]);
   const [showPoster, setShowPoster] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false); // 默认关闭，稍后根据设备类型设置
 
@@ -197,18 +196,47 @@ const ChatUI = () => {
         setGroup(group);
         setIsInitializing(false);
         setIsGroupDiscussionMode(group.isGroupDiscussionMode);
-        const groupAiCharacters = characters
+
+        let groupAiCharacters = characters
           .filter((character: any) => group.members.includes(character.id))
           .filter((character: any) => character.personality !== "sheduler")
           .sort((a: any, b: any) => {
             return group.members.indexOf(a.id) - group.members.indexOf(b.id);
           });
+
+        // 如果是API群组则重新拉取最新的角色列表
+        if (group.id && !group.id.toString().startsWith('ai')) {
+          try {
+            const characterResponse = await CharacterService.getCharactersByGroup(Number(group.id));
+            
+            if (characterResponse.success && characterResponse.data && Array.isArray(characterResponse.data)) {
+              const apiCharacters = characterResponse.data
+                .filter((character: any) => character.personality !== "sheduler")
+                .map((character: any) => ({
+                  id: character.id.toString(),
+                  name: character.name,
+                  personality: character.personality,
+                  model: character.model,
+                  avatar: character.avatar,
+                  custom_prompt: character.custom_prompt
+                }))
+                .sort((a: any, b: any) => a.id.localeCompare(b.id));
+              
+              groupAiCharacters = apiCharacters;
+            }
+          } catch (error) {
+            console.error('获取群组角色失败:', error);
+          }
+        }
+
         setGroupAiCharacters(groupAiCharacters);
         const allNames = groupAiCharacters.map((character: any) => character.name);
         allNames.push('user');
         let avatar_url = null;
         let nickname = '我';
         setAllNames(allNames);
+        
+        // 获取用户信息
         if (data.user && data.user != null) {
           const response1 = await request('/api/user/info');
           const userInfo = await response1.json();
@@ -226,10 +254,22 @@ const ChatUI = () => {
             status: 0
           });
         }
-        setUsers([
-          { id: 1, name: nickname, avatar: avatar_url || undefined },
-          ...groupAiCharacters
-        ]);
+
+        // 构建最终的用户列表
+        const finalUsers = [
+          { id: 0, name: nickname, avatar: avatar_url || undefined },
+          ...groupAiCharacters.map((character: any) => ({
+            id: character.id,
+            name: character.name,
+            avatar: character.avatar || undefined,
+            personality: character.personality,
+            model: character.model,
+            custom_prompt: character.custom_prompt
+          }))
+        ];
+        console.log("最终的用户列表", finalUsers);
+        
+        setUsers(finalUsers);
       } catch (error) {
         console.error("初始化数据失败:", error);
         setIsInitializing(false);
@@ -262,10 +302,21 @@ const ChatUI = () => {
   // 添加一个新的 useEffect 来监听 userStore.userInfo 的变化
   useEffect(() => {
     if (userStore.userInfo && users.length > 0) {
-      setUsers(prev => [
-        { id: 1, name: userStore.userInfo.nickname, avatar: userStore.userInfo.avatar_url || undefined },
-        ...prev.slice(1) // 保留其他 AI 角色
-      ]);
+      setUsers(prev => {
+        // 只更新第一个用户（当前用户）的信息，保留所有其他成员
+        const [firstUser, ...otherUsers] = prev;
+        if (firstUser && firstUser.id === 1) {
+          return [
+            { 
+              id: 1, 
+              name: userStore.userInfo.nickname, 
+              avatar: userStore.userInfo.avatar_url || undefined 
+            },
+            ...otherUsers // 保留所有其他成员（包括新添加的）
+          ];
+        }
+        return prev;
+      });
     }
   }, [userStore.userInfo]); // 当 userInfo 变化时更新 users
 
@@ -278,13 +329,6 @@ const ChatUI = () => {
     setUsers(users.filter(user => user.id !== userId));
   };
 
-  const handleToggleMute = (userId: string) => {
-    setMutedUsers(prev => 
-      prev.includes(userId) 
-        ? prev.filter(id => id !== userId)
-        : [...prev, userId]
-    );
-  };
 
   const handleShareChat = () => {
     setShowPoster(true);
@@ -341,10 +385,6 @@ const ChatUI = () => {
       selectedGroupAiCharacters = selectedAIs.map((ai: any) => groupAiCharacters.find(c => c.id === ai));
     }
     for (let i = 0; i < selectedGroupAiCharacters.length; i++) {
-      //禁言
-      if (mutedUsers.includes(selectedGroupAiCharacters[i].id)) {
-        continue;
-      }
       // 创建当前 AI 角色的消息
       const aiMessage = {
         id: messages.length + 2 + i,
@@ -727,8 +767,6 @@ const ChatUI = () => {
           showMembers={showMembers}
           setShowMembers={setShowMembers}
           users={users}
-          mutedUsers={mutedUsers}
-          handleToggleMute={handleToggleMute}
           isGroupDiscussionMode={isGroupDiscussionMode}
           onToggleGroupDiscussion={() => setIsGroupDiscussionMode(!isGroupDiscussionMode)}
           getAvatarData={getAvatarData}
@@ -737,6 +775,92 @@ const ChatUI = () => {
             if (group) {
               setGroup({...group, name: newName});
             }
+          }}
+          groupId={group ? Number(group.id) : undefined}
+          onMemberAdded={(member: Character) => {
+            setUsers(prev => {
+              const exists = prev.some(user => user.id.toString() === member.id.toString());
+              if (exists) return prev;
+
+              return [
+                ...prev,
+                {
+                  id: member.id.toString(),
+                  name: member.name,
+                  avatar: member.avatar || undefined,
+                  personality: member.personality,
+                  model: member.model,
+                  custom_prompt: member.custom_prompt
+                } as any
+              ];
+            });
+
+            setGroup(prevGroup => {
+              if (!prevGroup) return prevGroup;
+              const exists = prevGroup.members.includes(member.id.toString());
+              return exists
+                ? prevGroup
+                : {
+                    ...prevGroup,
+                    members: [...prevGroup.members, member.id.toString()]
+                  };
+            });
+
+            setGroupAiCharacters(prev => {
+              const exists = prev.some(char => char.id === member.id.toString());
+              if (exists) return prev;
+              return [
+                ...prev,
+                {
+                  id: member.id.toString(),
+                  name: member.name,
+                  personality: member.personality,
+                  model: member.model as any,
+                  avatar: member.avatar || undefined,
+                  custom_prompt: member.custom_prompt
+                } as any
+              ];
+            });
+          }}
+          onMemberUpdated={(member: Character) => {
+            setUsers(prev => prev.map(user => 
+              user.id.toString() === member.id.toString() 
+                ? {
+                    ...user,
+                    name: member.name,
+                    avatar: member.avatar || undefined,
+                    personality: member.personality,
+                    model: member.model,
+                    custom_prompt: member.custom_prompt
+                  } as any
+                : user
+            ));
+
+            setGroupAiCharacters(prev => prev.map(char => 
+              char.id === member.id.toString()
+                ? {
+                    ...char,
+                    name: member.name,
+                    personality: member.personality,
+                    model: member.model as any,
+                    avatar: member.avatar || undefined,
+                    custom_prompt: member.custom_prompt
+                  } as any
+                : char
+            ));
+          }}
+          onMemberDeleted={(memberId: string) => {
+            setUsers(prev => prev.filter(user => user.id.toString() !== memberId));
+
+            setGroup(prevGroup => {
+              if (!prevGroup) return prevGroup;
+              return {
+                ...prevGroup,
+                members: prevGroup.members.filter(id => id !== memberId)
+              };
+            });
+
+            setGroupAiCharacters(prev => prev.filter(char => char.id !== memberId));
           }}
         />
       </div>
