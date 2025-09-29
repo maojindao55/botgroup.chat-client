@@ -9,6 +9,7 @@ import { UserPlus, Edit, Edit2, Check, X, Trash2 } from 'lucide-react';
 import { type AICharacter } from "@/config/aiCharacters";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useState } from 'react';
 import { toast } from 'sonner';
 import { CharacterService, type Character } from '@/services/groupService';
@@ -32,6 +33,7 @@ interface MembersManagementProps {
   onMemberAdded?: (member: Character) => void;
   onMemberUpdated?: (member: Character) => void;
   onMemberDeleted?: (memberId: string) => void;
+  initData?: any;
 }
 
 export const MembersManagement = ({
@@ -46,26 +48,19 @@ export const MembersManagement = ({
   groupId,
   onMemberAdded,
   onMemberUpdated,
-  onMemberDeleted
+  onMemberDeleted,
+  initData
 }: MembersManagementProps) => {
   const [isEditingName, setIsEditingName] = useState(false);
   const [editedName, setEditedName] = useState(groupName);
-  const [isAddMemberOpen, setIsAddMemberOpen] = useState(false);
-  const [isEditMemberOpen, setIsEditMemberOpen] = useState(false);
+  const [isMemberDialogOpen, setIsMemberDialogOpen] = useState(false);
+  const [memberDialogMode, setMemberDialogMode] = useState<'add' | 'edit'>('add');
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [memberToDelete, setMemberToDelete] = useState<(User | AICharacter) | null>(null);
-  const [newMember, setNewMember] = useState({
-    name: '',
-    personality: '',
-    model: '',
-    avatar: '',
-    custom_prompt: ''
-  });
   const [editingMember, setEditingMember] = useState<(User | AICharacter) | null>(null);
-  const [editedMemberData, setEditedMemberData] = useState({
+  const [memberFormData, setMemberFormData] = useState({
     name: '',
-    personality: '',
     model: '',
     avatar: '',
     custom_prompt: ''
@@ -76,26 +71,30 @@ export const MembersManagement = ({
       toast.error('当前未选择群组，无法添加成员');
       return;
     }
-    setIsAddMemberOpen(true);
+    setMemberDialogMode('add');
+    setEditingMember(null);
+    setMemberFormData({
+      name: '',
+      model: '',
+      avatar: '',
+      custom_prompt: ''
+    });
+    setIsMemberDialogOpen(true);
   };
 
-  const handleCloseAddMember = () => {
-    setIsAddMemberOpen(false);
-    setNewMember({
+  const handleCloseMemberDialog = () => {
+    setIsMemberDialogOpen(false);
+    setEditingMember(null);
+    setMemberFormData({
       name: '',
-      personality: '',
       model: '',
       avatar: '',
       custom_prompt: ''
     });
   };
 
-  const handleMemberFieldChange = (field: keyof typeof newMember, value: string) => {
-    setNewMember(prev => ({ ...prev, [field]: value }));
-  };
-
-  const handleEditedMemberFieldChange = (field: keyof typeof editedMemberData, value: string) => {
-    setEditedMemberData(prev => ({ ...prev, [field]: value }));
+  const handleMemberFieldChange = (field: keyof typeof memberFormData, value: string) => {
+    setMemberFormData(prev => ({ ...prev, [field]: value }));
   };
 
   const handleOpenEditMember = (member: User | AICharacter) => {
@@ -110,27 +109,15 @@ export const MembersManagement = ({
       return;
     }
 
+    setMemberDialogMode('edit');
     setEditingMember(member);
-    setEditedMemberData({
+    setMemberFormData({
       name: member.name,
-      personality: 'personality' in member ? member.personality || '' : '',
       model: 'model' in member ? member.model || '' : '',
       avatar: member.avatar || '',
       custom_prompt: 'custom_prompt' in member ? member.custom_prompt || '' : ''
     });
-    setIsEditMemberOpen(true);
-  };
-
-  const handleCloseEditMember = () => {
-    setIsEditMemberOpen(false);
-    setEditingMember(null);
-    setEditedMemberData({
-      name: '',
-      personality: '',
-      model: '',
-      avatar: '',
-      custom_prompt: ''
-    });
+    setIsMemberDialogOpen(true);
   };
 
   const handleOpenDeleteConfirm = (member: User | AICharacter) => {
@@ -179,76 +166,61 @@ export const MembersManagement = ({
     }
   };
 
-  const handleSubmitNewMember = async () => {
+  const handleSubmitMember = async () => {
     if (!groupId) {
-      toast.error('当前未选择群组，无法添加成员');
+      toast.error('当前未选择群组，无法操作成员');
       return;
     }
 
-    if (!newMember.name.trim()) {
+    if (!memberFormData.name.trim()) {
       toast.error('请填写成员名称');
       return;
     }
 
-    setIsSubmitting(true);
-    try {
-      const response = await CharacterService.createCharacter({
-        gid: groupId,
-        name: newMember.name.trim(),
-        personality: newMember.personality.trim() || undefined,
-        model: newMember.model.trim() || undefined,
-        avatar: newMember.avatar.trim() || undefined,
-        custom_prompt: newMember.custom_prompt.trim() || undefined
-      });
-
-      if (response.success && response.data) {
-        toast.success(response.message || '添加成员成功');
-        const newCharacter = response.data;
-        onMemberAdded?.(newCharacter);
-        handleCloseAddMember();
-      } else {
-        toast.error(response.message || '添加成员失败');
-      }
-    } catch (error: any) {
-      console.error('添加成员失败:', error);
-      toast.error(error?.message || '添加成员失败，请稍后再试');
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const handleSubmitEditMember = async () => {
-    if (!groupId || !editingMember) {
+    if (memberDialogMode === 'edit' && !editingMember) {
       toast.error('参数错误，无法编辑成员');
       return;
     }
 
-    if (!editedMemberData.name.trim()) {
-      toast.error('请填写成员名称');
-      return;
-    }
-
     setIsSubmitting(true);
     try {
-      const response = await CharacterService.updateCharacter(Number(editingMember.id), {
-        name: editedMemberData.name.trim(),
-        personality: editedMemberData.personality.trim() || undefined,
-        model: editedMemberData.model.trim() || undefined,
-        avatar: editedMemberData.avatar.trim() || undefined,
-        custom_prompt: editedMemberData.custom_prompt.trim() || undefined
-      });
+      let response;
+      if (memberDialogMode === 'add') {
+        response = await CharacterService.createCharacter({
+          gid: groupId,
+          name: memberFormData.name.trim(),
+          model: memberFormData.model.trim() || undefined,
+          avatar: memberFormData.avatar.trim() || undefined,
+          custom_prompt: memberFormData.custom_prompt.trim() || undefined
+        });
+      } else {
+        response = await CharacterService.updateCharacter(Number(editingMember!.id), {
+          name: memberFormData.name.trim(),
+          model: memberFormData.model.trim() || undefined,
+          avatar: memberFormData.avatar.trim() || undefined,
+          custom_prompt: memberFormData.custom_prompt.trim() || undefined
+        });
+      }
 
       if (response.success && response.data) {
-        toast.success(response.message || '编辑成员成功');
-        const updatedCharacter = response.data;
-        onMemberUpdated?.(updatedCharacter);
-        handleCloseEditMember();
+        const successMessage = memberDialogMode === 'add' ? '添加成员成功' : '编辑成员成功';
+        toast.success(response.message || successMessage);
+        
+        if (memberDialogMode === 'add') {
+          onMemberAdded?.(response.data);
+        } else {
+          onMemberUpdated?.(response.data);
+        }
+        
+        handleCloseMemberDialog();
       } else {
-        toast.error(response.message || '编辑成员失败');
+        const errorMessage = memberDialogMode === 'add' ? '添加成员失败' : '编辑成员失败';
+        toast.error(response.message || errorMessage);
       }
     } catch (error: any) {
-      console.error('编辑成员失败:', error);
-      toast.error(error?.message || '编辑成员失败，请稍后再试');
+      const errorMessage = memberDialogMode === 'add' ? '添加成员失败' : '编辑成员失败';
+      console.error(errorMessage + ':', error);
+      toast.error(error?.message || errorMessage + '，请稍后再试');
     } finally {
       setIsSubmitting(false);
     }
@@ -385,8 +357,8 @@ export const MembersManagement = ({
                     </Avatar>
                     <div className="flex flex-col">
                       <span>{user.name}</span>
-                      {'personality' in user && user.personality && (
-                        <span className="text-xs text-gray-500">{user.personality}</span>
+                      {'model' in user && user.model && (
+                        <span className="text-xs text-gray-500">{user.model}</span>
                       )}
                     </div>
                   </div>
@@ -434,119 +406,68 @@ export const MembersManagement = ({
           </ScrollArea>
         </div>
       </SheetContent>
-      {/* 添加成员弹窗 */}
-      <Dialog open={isAddMemberOpen} onOpenChange={(open) => (open ? handleOpenAddMember() : handleCloseAddMember())}>
+      {/* 成员管理弹窗 */}
+      <Dialog open={isMemberDialogOpen} onOpenChange={(open) => (open ? setIsMemberDialogOpen(true) : handleCloseMemberDialog())}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>添加角色成员</DialogTitle>
+            <DialogTitle>{memberDialogMode === 'add' ? '添加角色成员' : '编辑角色成员'}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <div>
               <div className="text-sm text-gray-500 mb-1">名称</div>
               <Input
-                value={newMember.name}
+                value={memberFormData.name}
                 onChange={(e) => handleMemberFieldChange('name', e.target.value)}
                 placeholder="请输入角色名称"
               />
             </div>
             <div>
-              <div className="text-sm text-gray-500 mb-1">人设</div>
-              <Input
-                value={newMember.personality}
-                onChange={(e) => handleMemberFieldChange('personality', e.target.value)}
-                placeholder="例如：温柔的情感助理"
-              />
-            </div>
-            <div>
               <div className="text-sm text-gray-500 mb-1">模型</div>
-              <Input
-                value={newMember.model}
-                onChange={(e) => handleMemberFieldChange('model', e.target.value)}
-                placeholder="请输入使用的模型，如 deepseek-chat"
-              />
+              <Select value={memberFormData.model} onValueChange={(value: string) => handleMemberFieldChange('model', value)}>
+                <SelectTrigger>
+                  <SelectValue placeholder="请选择模型" />
+                </SelectTrigger>
+                <SelectContent>
+                  {initData?.models && typeof initData.models === 'object' ? 
+                    Object.keys(initData.models).map((modelName: string) => (
+                      <SelectItem key={modelName} value={modelName}>
+                        {modelName}
+                      </SelectItem>
+                    )) : (
+                      <SelectItem value="" disabled>
+                        暂无可用模型
+                      </SelectItem>
+                    )
+                  }
+                </SelectContent>
+              </Select>
             </div>
-            <div>
+            {/*<div>
               <div className="text-sm text-gray-500 mb-1">头像地址</div>
               <Input
-                value={newMember.avatar}
+                value={memberFormData.avatar}
                 onChange={(e) => handleMemberFieldChange('avatar', e.target.value)}
                 placeholder="可选，输入头像图片URL"
               />
-            </div>
+            </div>*/}
             <div>
               <div className="text-sm text-gray-500 mb-1">自定义提示词</div>
               <Textarea
-                value={newMember.custom_prompt}
+                value={memberFormData.custom_prompt}
                 onChange={(e) => handleMemberFieldChange('custom_prompt', e.target.value)}
                 placeholder="可选，为角色设置自定义提示词"
               />
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={handleCloseAddMember} disabled={isSubmitting}>
+            <Button variant="outline" onClick={handleCloseMemberDialog} disabled={isSubmitting}>
               取消
             </Button>
-            <Button onClick={handleSubmitNewMember} disabled={isSubmitting}>
-              {isSubmitting ? '添加中...' : '确认添加'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* 编辑成员弹窗 */}
-      <Dialog open={isEditMemberOpen} onOpenChange={(open) => (open ? setIsEditMemberOpen(true) : handleCloseEditMember())}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>编辑角色成员</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div>
-              <div className="text-sm text-gray-500 mb-1">名称</div>
-              <Input
-                value={editedMemberData.name}
-                onChange={(e) => handleEditedMemberFieldChange('name', e.target.value)}
-                placeholder="请输入角色名称"
-              />
-            </div>
-            <div>
-              <div className="text-sm text-gray-500 mb-1">人设</div>
-              <Input
-                value={editedMemberData.personality}
-                onChange={(e) => handleEditedMemberFieldChange('personality', e.target.value)}
-                placeholder="例如：温柔的情感助理"
-              />
-            </div>
-            <div>
-              <div className="text-sm text-gray-500 mb-1">模型</div>
-              <Input
-                value={editedMemberData.model}
-                onChange={(e) => handleEditedMemberFieldChange('model', e.target.value)}
-                placeholder="请输入使用的模型，如 deepseek-chat"
-              />
-            </div>
-            <div>
-              <div className="text-sm text-gray-500 mb-1">头像地址</div>
-              <Input
-                value={editedMemberData.avatar}
-                onChange={(e) => handleEditedMemberFieldChange('avatar', e.target.value)}
-                placeholder="可选，输入头像图片URL"
-              />
-            </div>
-            <div>
-              <div className="text-sm text-gray-500 mb-1">自定义提示词</div>
-              <Textarea
-                value={editedMemberData.custom_prompt}
-                onChange={(e) => handleEditedMemberFieldChange('custom_prompt', e.target.value)}
-                placeholder="可选，为角色设置自定义提示词"
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={handleCloseEditMember} disabled={isSubmitting}>
-              取消
-            </Button>
-            <Button onClick={handleSubmitEditMember} disabled={isSubmitting}>
-              {isSubmitting ? '保存中...' : '确认保存'}
+            <Button onClick={handleSubmitMember} disabled={isSubmitting}>
+              {isSubmitting 
+                ? (memberDialogMode === 'add' ? '添加中...' : '保存中...') 
+                : (memberDialogMode === 'add' ? '确认添加' : '确认保存')
+              }
             </Button>
           </DialogFooter>
         </DialogContent>

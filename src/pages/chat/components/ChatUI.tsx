@@ -96,6 +96,7 @@ const ChatUI = () => {
   const [groupAiCharacters, setGroupAiCharacters] = useState<AICharacter[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isInitializing, setIsInitializing] = useState(false);
+  const [initData, setInitData] = useState<any>(null);
   const [isGroupDiscussionMode, setIsGroupDiscussionMode] = useState(false);
   const [users, setUsers] = useState<User[]>([]);
   const [allNames, setAllNames] = useState<string[]>([]);
@@ -139,6 +140,7 @@ const ChatUI = () => {
         }
         const {data} = await response.json();
         console.log("初始化数据", data);
+        setInitData(data);
         
         // 自动获取最新的群组列表
         try {
@@ -764,6 +766,7 @@ const ChatUI = () => {
 
         {/* Members Management Dialog */}
         <MembersManagement 
+          initData={initData}
           showMembers={showMembers}
           setShowMembers={setShowMembers}
           users={users}
